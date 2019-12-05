@@ -1,486 +1,242 @@
 // ----------------------------------------------------------------------------
-
 //
-
 //        ** **        **          **  ****      **  **********  ********** Â®
-
 //       **   **        **        **   ** **     **  **              **
-
 //      **     **        **      **    **  **    **  **              **
-
 //     **       **        **    **     **   **   **  *********       **
-
 //    **         **        **  **      **    **  **  **              **
-
 //   **           **        ****       **     ** **  **              **
-
 //  **  .........  **        **        **      ****  **********      **
-
 //     ...........
-
 //                                     Reach Furtherâ„¢
-
 //
-
 // ----------------------------------------------------------------------------
-
 //
-
 //  This design is the property of Avnet.  Publication of this
-
 //  design is not authorized without written consent from Avnet.
-
 //
-
 //  Please direct any questions to the Avnet Technical Community:
-
 //     http://avnet.me/E14-Zedboard-Community
-
 //
-
 //  Product information is available at:
-
 //     http://avnet.me/ultra96
-
 //     http://avnet.me/ultra96-v2
-
 //
-
 //  Disclaimer:
-
 //     Avnet, Inc. makes no warranty for the use of this code or design.
-
 //     This code is provided  "As Is". Avnet, Inc assumes no responsibility for
-
 //     any errors, which may appear in this code, nor does it make a commitment
-
 //     to update the information contained herein. Avnet, Inc specifically
-
 //     disclaims any implied warranties of fitness for a particular purpose.
-
 //                      Copyright(c) 2019 Avnet, Inc.
-
 //                              All rights reserved.
-
 //
-
 // ----------------------------------------------------------------------------
-
 //
-
 //  Create Date:         May 9, 2019
-
 //  Design Name:         LSM6DSL Sensor Interface via SPI
-
 //  Module Name:         sensor_interface.c
-
 //  Project Name:        Developing ZU+ MPSoC Software
-
 //  Target Devices:      Xilinx Zynq UltraScale+ MPSoC
-
 //  Hardware Boards:     Ultra96-V1, Ultra96-V2
-
 //
-
 //  Tool versions:       Xilinx Vivado 2018.3
-
 //
-
 //  Description:         Use the PS SPI controller on the ZU+ MPSoC
-
 //                       to read the temperature data on the LSM6DSL
-
 //
-
 //  Dependencies:
-
 //
-
 //  Revision:            May 9, 2019: 1.00 Initial version
-
 //
-
 // ----------------------------------------------------------------------------
-
 #include "xparameters.h"
-
 #include "xspips.h"
-
 #include "sleep.h"
-
 #include <stdio.h>
 
-
-
 # define SPI             XPAR_XSPIPS_0_DEVICE_ID
-
 # define LSM6DSL_WHOAMI  0x6A
-
-
 
 static XSpiPs SpiInstance;
 
-
-
 s16 Convert_Value(u8 low, u8 high){
-
 	u16 value = 0;
-
 	s16 opValue;
-
 	// Merge High and Low bytes into temp word
-
 		value = ((high << 8) | (low));
 
-
-
 	// Check for negative
-
 		if ((value & 0x8000) == 0) //msb = 0 so not negative
-
 		{
-
 			opValue = value;
-
 			// do nothing
-
 		} else {
-
 			// Otherwise perform the 2's complement math on the value
-
 			opValue = (~(value - 0x01)) * -1;
-
 		}
-
 		//printf("low: %x High: %x\r\n", low, high);
 
-
-
 	return opValue;
-
 }
-
-
 
 int main() {
 
-
-
     XSpiPs_Config * SpiConfig;
 
-
-
     s16 temperature;
-
     u8 cmd[15];
-
     u8 rx[15];
-
     u16 temp;
 
-
-
     int Gyro_X;
-
     int Gyro_Y;
-
     int Gyro_Z;
 
-
-
     int Accl_X;
-
     int Accl_Y;
-
     int Accl_Z;
 
-
-
     u8 temp_l;
-
     u8 temp_h;
-
-
 
     float temp_degC;
 
-
-
     printf("James O was here \n\r");
 
-
-
     // Set up the PS SPI Controller
-
     SpiConfig = XSpiPs_LookupConfig((u16) SPI);
-
     XSpiPs_CfgInitialize( & SpiInstance, SpiConfig, SpiConfig->BaseAddress);
-
     XSpiPs_SetOptions( & SpiInstance, XSPIPS_MASTER_OPTION | XSPIPS_FORCE_SSELECT_OPTION);
-
     XSpiPs_SetClkPrescaler( & SpiInstance, XSPIPS_CLK_PRESCALE_256);
 
-
-
     // Detect the LSM6DSL at Site 2 (Slave Select = 0x01)
-
     // Perform a read transaction (80h) && register WHO_AM_I (0Fh) = 0x8F
-
     //   Byte 0 sends the read command
-
     //   Byte 1 receives the read back data, which is expected to be 0x6A
 
-
-
     cmd[0] = (u8) 0x8f;
-
     cmd[1] = (u8) 0x00;
-
     XSpiPs_SetSlaveSelect( & SpiInstance, 0x01);
-
     XSpiPs_PolledTransfer( & SpiInstance, cmd, rx, 2);
-
     XSpiPs_SetSlaveSelect( & SpiInstance, 0x00);
-
     if (rx[1] == 0x6a) {
-
         printf("LSM6DSL detected in Site 2\n\r");
-
     } else {
-
         printf("LSM6DSL NOT detected cannot continue\n\r");
-
         return XST_FAILURE;
-
     }
 
-
-
     // Configure the LSM6DSL
-
     // Perform a write transaction (00h) && register CTRL1_XL (10h) = 0x10
-
     //   Byte 0 sends the write command
-
     //   Byte 1 sends the write data 0xA0
-
     //      ODR_XL[3:0] = 0xA --> 6.66 KhZ
-
     //      FS_XL[1:0]  = 00B
-
     //      LPF1_BW_SEL = 0B
-
     //      BW0_XL      = 0B
 
-
-
     cmd[0] = (u8) 0x10;
-
     cmd[1] = (u8) 0xA0; //JO This enables the Accel (Linear Acceleration)
-
     cmd[2] = (u8) 0xA0; //JO Added this to enable the Gyroscope
-
     XSpiPs_SetSlaveSelect( & SpiInstance, 0x01);
-
     XSpiPs_PolledTransfer( & SpiInstance, cmd, rx, 3); //was 2. Changed to 3
-
     XSpiPs_SetSlaveSelect( & SpiInstance, 0x00);
-
-
 
     //JOG - Add Rounding to data
-
     cmd[0] = (u8) 0x14; // address is 0x14h; control register 5 (CTRL5_C)
-
     cmd[1] = (u8) 0x60; // B 0110 0000. Rounds Gyro and Accelerometer
-
     XSpiPs_SetSlaveSelect( & SpiInstance, 0x01);
-
     XSpiPs_PolledTransfer( & SpiInstance, cmd, rx, 2);
-
     XSpiPs_SetSlaveSelect( & SpiInstance, 0x00);
-
-
-
 
 
     while (1) {
-
 		
-
 	// Read back the temperature from the LSM6DSL
-
 	// Perform a read transaction (80h) && register OUT_TEMP_L (20h) = 0xA0
-
 	// Read the next byte as well, register OUT_TEMP_H (21h)
-
 	//   Byte 0 sends the read command of register 0x20
-
 	//   Bytes 1 and are dummy bytes while the controller receives data
-
 	//      rx[1] will hold OUT_TEMP_L
-
 	//      rx[2] will hold OUT_TEMP_h
 
-
-
         cmd[0] = (u8) 0xA0;
-
         cmd[1] = (u8) 0x00; //temp_L
-
         cmd[2] = (u8) 0x00; //temp_H
 
-
-
         //Gyroscope readings
-
         cmd[3] = (u8) 0x00; //OUTX_L_G (22h)
-
         cmd[4] = (u8) 0x00; //OUTX_H_G (23h)
 
-
-
         cmd[5] = (u8) 0x00; //OUTY_L_G (24h)
-
         cmd[6] = (u8) 0x00; //OUTY_H_G (25h)
 
-
-
         cmd[7] = (u8) 0x00; //OUTZ_L_G (26h)
-
         cmd[8] = (u8) 0x00; //OUTZ_H_G (27h)
 
-
-
         //Accelerometer / linear acceleration
-
         cmd[9]  = (u8) 0x00; //OUTX_L_XL (28h)
-
         cmd[10] = (u8) 0x00; //OUTX_H_XL (29h)
 
-
-
         cmd[11] = (u8) 0x00; //OUTY_L_XL (2Ah)
-
         cmd[12] = (u8) 0x00; //OUTY_H_XL (2Bh)
 
-
-
         cmd[13] = (u8) 0x00; //OUTZ_L_XL (2Ch)
-
         cmd[14] = (u8) 0x00; //OUTZ_H_XL (2Dh)
 
-
-
         XSpiPs_SetSlaveSelect( & SpiInstance, 0x01);
-
         XSpiPs_PolledTransfer( & SpiInstance, cmd, rx, 15);
-
         XSpiPs_SetSlaveSelect( & SpiInstance, 0x00);
-
         temp_l = rx[1];
-
         temp_h = rx[2];
-
         //printf("Temp_L Reg %d ", temp_l);
-
         //printf("Temp_H Reg %d\n\r", temp_h);
 
-
-
 	// Merge High and Low temperature bytes into temp word
-
         temp = ((temp_h << 8) | (temp_l));
 
-
-
 	// Check for negative
-
         if ((temp & 0x8000) == 0) //msb = 0 so not negative
-
         {
-
             temperature = temp;
-
         } else {
-
             // Otherwise perform the 2's complement math on the value
-
             temperature = (~(temp - 0x01)) * -1;
-
         }
 
 
-
-
-
 	// Print the raw temperature data
-
         //printf("Raw Temp Decimal %d ", temperature);
-
 		
-
 	// Convert to Degrees C. Each count is 1/256th of a degree, centered around 25 degrees C
-
         temp_degC = (temperature / 256.0f) + 25.0f;
-
         //printf("Temp Deg C %9.6f\n\r", temp_degC);
 
-
-
         Gyro_X = Convert_Value(rx[3], rx[4]);
-
         Gyro_Y = Convert_Value(rx[5], rx[6]);
-
         Gyro_Z = Convert_Value(rx[7], rx[8]);
 
-
-
         float LA = 0.061; //linear acceleration (Accelerometer) sensitivity in mG/LSB
-
         Accl_X = Convert_Value(rx[9], rx[10]);
-
         Accl_Y = Convert_Value(rx[11], rx[12]);
-
         Accl_Z = Convert_Value(rx[13], rx[14]);
 
-
-
         float AX = Accl_X * LA /1000;
-
         float AY = Accl_Y * LA /1000;
-
         float AZ = Accl_Z * LA /1000;
 
-
-
         float GSensitivity = 8.75; // G's offset calibration
-
         float gX = Gyro_X * GSensitivity /1000;
-
         float gY = Gyro_Y * GSensitivity /1000;
-
         float gZ = Gyro_Z * GSensitivity /1000;
 
-
-
         printf("Accel: X %3.3f, \tY: %3.3f, \tZ: %3.3f", AX, AY, AZ);
-
-
 
         printf("\tGyro: X %4.4f, \tY: %4.4f, \tZ: %4.4f \r\n", gX, gY, gZ);
 
 
-
-
-
         usleep(100000);
-
     }
 
-
-
 }
-
-
-
